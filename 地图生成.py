@@ -122,7 +122,7 @@ def make_perlin_map(width=1024, height=1024, scale=100.0, octaves=2, persistence
     return island_map
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     # 生成并保存岛屿地图
     island_map = make_perlin_map()
     save_island_map(island_map)
