@@ -17,20 +17,22 @@ COLORS = {
 
 class IslandMap:
     def __init__(self):
+        """地图信息初始化"""
         # 加载地图数据
         self.raw_map = load_island_map()
         self.texture = self._create_full_texture()
         self.display_texture = pygame.transform.smoothscale(self.texture, SCREEN_SIZE)
 
+        # 当前帧已探索区域记录
+        self.current_explored = np.zeros_like(self.raw_map, dtype=bool)
+
     def _create_full_texture(self):
         """创建2048×2048的完整纹理"""
         texture = pygame.Surface((FULL_SIZE, FULL_SIZE))
-
         transposed_map = self.raw_map.T  # 交换行列索引, 不然莫名其妙是反的浪费我两个小时（怒）
 
         # 使用numpy向量化操作加速纹理生成
         land_mask = np.repeat(np.repeat(transposed_map, TILE_SCALE, axis=0), TILE_SCALE, axis=1)
-
         # 生成颜色矩阵
         color_array = np.where(land_mask[:, :, None], np.array(COLORS['land'], dtype=np.uint8), np.array(COLORS['sea'], dtype=np.uint8))
 
@@ -38,12 +40,38 @@ class IslandMap:
         pygame.surfarray.blit_array(texture, color_array)
         return texture
 
+    def draw_current_explored(self, screen):
+        """在屏幕上绘制当前帧探索到的区域（向量化版本）"""
+        # 创建透明图层
+        explored_texture = pygame.Surface(SCREEN_SIZE, pygame.SRCALPHA)
+        # 获取需要绘制的坐标点
+        y_coords, x_coords = np.where(self.current_explored)
+
+        # 转换为屏幕坐标系（使用向量化计算）
+        screen_x = (x_coords * TILE_SCALE * (SCREEN_SIZE[0] / FULL_SIZE)).astype(int)
+        screen_y = (y_coords * TILE_SCALE * (SCREEN_SIZE[1] / FULL_SIZE)).astype(int)
+
+        # 过滤超出屏幕范围的坐标
+        valid = (screen_x >= 0) & (screen_x < SCREEN_SIZE[0]) & (screen_y >= 0) & (screen_y < SCREEN_SIZE[1])
+        screen_x, screen_y = screen_x[valid], screen_y[valid]
+
+        # 直接操作像素数组
+        pixels = pygame.surfarray.pixels3d(explored_texture)
+        alpha = pygame.surfarray.pixels_alpha(explored_texture)
+
+        # 设置颜色为半透明白色
+        pixels[screen_x, screen_y] = [255, 255, 255]  # RGB
+        alpha[screen_x, screen_y] = 128  # Alpha
+
+        # 释放像素数组锁
+        del pixels, alpha
+        # 绘制到屏幕
+        screen.blit(explored_texture, (0, 0))
+
 
 class Ship:
     def __init__(self):
-        """
-        船舶模拟类，负责处理船舶物理特性、运动状态和碰撞检测
-        """
+        """船舶模拟类，负责处理船舶物理特性、运动状态和碰撞检测"""
         # 图形和碰撞配置
         self.config = {
             'start_pos': (FULL_SIZE//2, FULL_SIZE//2),  # 初始地图坐标 (像素)
@@ -89,6 +117,7 @@ class Ship:
 
     @property
     def screen_scale(self):
+        """地图尺寸和模拟尺寸映射"""
         return SCREEN_SIZE[0] / FULL_SIZE
 
     def update(self, dt):
@@ -157,13 +186,11 @@ class Ship:
         self.heading %= 360  # 标准化航向角
 
     def _update_position(self, dt):
+        """对状态微分进行叠加"""
         rad = np.deg2rad(self.heading)
-        dx = self.velocity * np.cos(rad) * dt
-        dy = -self.velocity * np.sin(rad) * dt  # Pygame坐标系Y轴向下
-
+        dx, dy = self.velocity * np.cos(rad) * dt, -self.velocity * np.sin(rad) * dt
         self.map_pos += pygame.Vector2(dx, dy)
-        self.map_pos.x = max(0.0, min(self.map_pos.x, FULL_SIZE))
-        self.map_pos.y = max(0.0, min(self.map_pos.y, FULL_SIZE))
+        self.map_pos.x, self.map_pos.y = max(0.0, min(self.map_pos.x, FULL_SIZE)), max(0.0, min(self.map_pos.y, FULL_SIZE))
 
     def _update_collision_points(self):
         """更新碰撞检测点全局坐标"""
@@ -184,23 +211,16 @@ class Ship:
 
         # 船头方向向量
         head_angle = np.deg2rad(self.heading)
-        head_end = (
-            center_screen[0] + 90 * np.cos(head_angle) * self.screen_scale,
-            center_screen[1] - 90 * np.sin(head_angle) * self.screen_scale  # Y轴取反
-        )
+        head_end = center_screen[0] + 90 * np.cos(head_angle) * self.screen_scale, center_screen[1] - 90 * np.sin(head_angle) * self.screen_scale
         pygame.draw.line(screen, self.config['bow_vector_color'], center_screen, head_end, self.config['vector_width'])
 
         # 舵角方向向量
         rudder_angle = np.deg2rad(self.heading + self.rudder_angle)
-        rudder_end = (
-            center_screen[0] + 90 * np.cos(rudder_angle) * self.screen_scale,
-            center_screen[1] - 90 * np.sin(rudder_angle) * self.screen_scale  # Y轴取反
-        )
+        rudder_end = center_screen[0] + 90 * np.cos(rudder_angle) * self.screen_scale, center_screen[1] - 90 * np.sin(rudder_angle) * self.screen_scale
         pygame.draw.line(screen, self.config['rudder_vector_color'], center_screen, rudder_end, self.config['vector_width'])
 
-        # 绘制船体
+        # 绘制船体碰撞框
         self._draw_ship(screen)
-        # 绘制碰撞框
         self._draw_collision(screen)
 
         # 绘制碰撞点标记
@@ -210,10 +230,7 @@ class Ship:
 
         rad = np.deg2rad(self.heading + 180)  # 正后方方向
         text_offset = 10 * self.screen_scale  # 偏移量
-        text_pos = (
-            self.map_pos.x * self.screen_scale + np.cos(rad) * text_offset,
-            self.map_pos.y * self.screen_scale - np.sin(rad) * text_offset  # 注意Y轴取反
-        )
+        text_pos = self.map_pos.x * self.screen_scale + np.cos(rad) * text_offset, self.map_pos.y * self.screen_scale - np.sin(rad) * text_offset
 
         # 创建旋转字体对象
         font = pygame.font.SysFont('Arial', 12, bold=True)
@@ -233,12 +250,10 @@ class Ship:
     def _draw_ship(self, screen):
         """绘制船体三角形"""
         screen_points = []
-        for (x, y) in self.config['ship_shape']:
-            # 坐标旋转
+        for x, y in self.config['ship_shape']:
+            # 坐标旋转转换
             rot_x, rot_y = self._rotate_point(x, y)
-            # 坐标转换
-            screen_x = (self.map_pos.x + rot_x) * self.screen_scale
-            screen_y = (self.map_pos.y + rot_y) * self.screen_scale
+            screen_x, screen_y = (self.map_pos.x + rot_x) * self.screen_scale, (self.map_pos.y + rot_y) * self.screen_scale
             screen_points.append((screen_x, screen_y))
         pygame.draw.polygon(screen, COLORS['ship'], screen_points)
 
@@ -259,9 +274,30 @@ class Ship:
         angle = np.deg2rad(-self.heading + 90)
         return x * np.cos(angle) - y * np.sin(angle), x * np.sin(angle) + y * np.cos(angle)
 
+    def radar_detect(self, map_instance, radius):
+        """检测指定半径范围内的地图区域，并更新已探索区域"""
+        # 每帧清空当前帧已探索区域记录
+        map_instance.current_explored = np.zeros_like(map_instance.raw_map, dtype=bool)
+
+        # 计算以船为中心的圆形区域的边界
+        center_x, center_y = int(self.map_pos.x / TILE_SCALE), int(self.map_pos.y / TILE_SCALE)
+        left, right = max(0, center_x - radius), min(ORIGINAL_SIZE, center_x + radius)
+        top, bottom = max(0, center_y - radius), min(ORIGINAL_SIZE, center_y + radius)
+
+        # 创建圆形遮罩
+        y, x = np.ogrid[top:bottom, left:right]
+        circle_mask = (x - center_x) ** 2 + (y - center_y) ** 2 <= radius ** 2
+
+        # 找到圆形区域内的陆地像素
+        land_pixels = np.where(np.logical_and(circle_mask, map_instance.raw_map[top:bottom, left:right]))
+
+        # 更新当前帧已探索区域
+        map_instance.current_explored[top:bottom, left:right][land_pixels] = True
+
 
 class NavigationSimulator:
     def __init__(self):
+        """窗口对象初始化"""
         pygame.init()
         self.screen = pygame.display.set_mode(SCREEN_SIZE)
         pygame.display.set_caption("高级船舶模拟器")
@@ -271,6 +307,7 @@ class NavigationSimulator:
         self.running = True
 
     def handle_events(self, dt):
+        """处理键盘事件"""
         keys = pygame.key.get_pressed()
 
         for event in pygame.event.get():
@@ -329,11 +366,9 @@ class NavigationSimulator:
 
         for point in self.ship.collision_global:
             # 转换为原始地图坐标
-            raw_x = int(point.x / TILE_SCALE)
-            raw_y = int(point.y / TILE_SCALE)
+            raw_x, raw_y = int(point.x / TILE_SCALE), int(point.y / TILE_SCALE)
             # 边界保护
-            raw_x = np.clip(raw_x, 0, ORIGINAL_SIZE - 1)
-            raw_y = np.clip(raw_y, 0, ORIGINAL_SIZE - 1)
+            raw_x, raw_y = np.clip(raw_x, 0, ORIGINAL_SIZE - 1), np.clip(raw_y, 0, ORIGINAL_SIZE - 1)
 
             if self.island_map.raw_map[raw_y, raw_x]:
                 self.ship.is_colliding = True
@@ -354,8 +389,13 @@ class NavigationSimulator:
             self.ship.update(dt)
             self.check_collision()
 
+            # 雷达检测
+            self.ship.radar_detect(self.island_map, 256)  # 雷达半径为256像素
+
             # 渲染画面
             self.screen.blit(self.island_map.display_texture, (0, 0))
+            self.island_map.draw_current_explored(self.screen)  # 绘制当前帧探索到的区域
+
             self.ship.draw(self.screen)
             pygame.display.flip()
 
