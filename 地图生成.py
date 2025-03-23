@@ -1,10 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def save_island_map(island_map, filename="island_map.npy"):
     """保存岛屿地图到文件"""
     np.save(filename, island_map)
     print(f"岛屿地图已保存到 {filename}")
+
 
 def load_island_map(filename="island_map.npy"):
     """从文件加载岛屿地图"""
@@ -12,8 +14,10 @@ def load_island_map(filename="island_map.npy"):
     print(f"岛屿地图已从 {filename} 加载")
     return island_map
 
+
 def generate_perlin_noise_2d(shape, scale=100.0, octaves=2, persistence=0.5, lacunarity=2.0, seed=None):
     """生成二维柏林噪声"""
+
     def leap(a, b, x):
         return a + x * (b - a)
 
@@ -58,6 +62,7 @@ def generate_perlin_noise_2d(shape, scale=100.0, octaves=2, persistence=0.5, lac
 
     return noise_map
 
+
 def filter_islands(island_map, min_size):
     """过滤掉小于最小尺寸的岛屿"""
     height, width = island_map.shape
@@ -86,7 +91,9 @@ def filter_islands(island_map, min_size):
 
     return island_map
 
-def make_perlin_map(width=1024, height=1024, scale=100.0, octaves=2, persistence=0.5, circularity=2.0, seed=42, island_threshold=0.60, min_island_size=300):
+
+def make_perlin_map(width=1024, height=1024, scale=100.0, octaves=2, persistence=0.5, circularity=2.0, seed=42,
+                    island_threshold=0.60, min_island_size=300):
     """
     生成一个随机地图，建议复用 (❀｣╹□╹)｣*･
     :return: island_map

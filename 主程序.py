@@ -7,24 +7,19 @@ ORIGINAL_SIZE = 1024  # 原始地图尺寸
 TILE_SCALE = 2  # 每个逻辑单元放大倍数
 FULL_SIZE = ORIGINAL_SIZE * TILE_SCALE  # 2048×2048
 SCREEN_SIZE = (768, 768)  # 显示窗口尺寸
-
-COLORS = {
-    'sea': (31, 159, 255),
-    'land': (31, 159, 31),
-    'ship': (255, 127, 191)
-}
+COLORS = {'sea': (31, 159, 255), 'land': (31, 159, 31), 'road': (255, 0, 0), 'ship': (255, 127, 191)}
 
 
 class IslandMap:
     def __init__(self):
         """地图信息初始化"""
         # 加载地图数据
-        self.raw_map = load_island_map()
+        self.raw_map = load_island_map("island_map_A_Star.npy")
         self.texture = self._create_full_texture()
         self.display_texture = pygame.transform.smoothscale(self.texture, SCREEN_SIZE)
 
         # 当前帧已探索区域记录
-        self.current_explored = np.zeros_like(self.raw_map, dtype=bool)
+        self.current_explored = np.zeros_like(self.raw_map, dtype=int)
 
     def _create_full_texture(self):
         """创建2048×2048的完整纹理"""
@@ -33,9 +28,10 @@ class IslandMap:
 
         # 使用numpy向量化操作加速纹理生成
         land_mask = np.repeat(np.repeat(transposed_map, TILE_SCALE, axis=0), TILE_SCALE, axis=1)
-        # 生成颜色矩阵
-        color_array = np.where(land_mask[:, :, None], np.array(COLORS['land'], dtype=np.uint8), np.array(COLORS['sea'], dtype=np.uint8))
-
+        # 颜色矩阵映射
+        color_palette = np.array([COLORS['sea'], COLORS['land'], COLORS['road']], dtype=np.uint8)
+        # 使用NumPy高级索引直接映射颜色
+        color_array = color_palette[land_mask]
         # 转换为Pygame Surface
         pygame.surfarray.blit_array(texture, color_array)
         return texture
@@ -79,9 +75,9 @@ class Ship:
             'collision_points': [(0, -30), (-15, 30), (15, 30)],  # 碰撞检测点 (局部坐标)
             'collision_color': (255, 0, 255),  # 正常碰撞框颜色 (BGR)
             'collision_alert': (0, 255, 255),  # 碰撞警告颜色 (BGR)
-            'collision_width': 1,  # 碰撞框线宽 (像素)
             'bow_vector_color': (255, 127, 0),  # 船头方向向量颜色 (RGB)
             'rudder_vector_color': (192, 192, 0),  # 舵向方向向量颜色 (RGB)
+            'collision_width': 1,  # 碰撞框线宽 (像素)
             'vector_width': 2  # 向量线线宽 (像素)
         }
 
@@ -124,20 +120,15 @@ class Ship:
         """更新船舶状态"""
         # 推进力计算
         propulsion = self._calculate_propulsion()
-
         # 阻力计算（包含侧舷转向带来的速度损失）
         resistance = self._calculate_resistance()
-
         # 物理计算
         acceleration = (propulsion - resistance) / self.physics_config['mass']
         self.velocity += acceleration * dt
-
         # 速度限制
         self.velocity = np.clip(self.velocity, -self.physics_config['max_speed_reverse'], self.physics_config['max_speed_forward'])
-
         # 转向更新
         self._update_steering(dt)
-
         # 位置更新
         self._update_position(dt)
         self._update_collision_points()
@@ -167,7 +158,6 @@ class Ship:
 
         # 侧舷转向阻力（与舵角成正比，速度二次方相关）
         steering_res = (abs(self.rudder_angle) / self.physics_config['max_rudder_angle']) * self.physics_config['side_resistance'] * speed ** 2
-
         return (base_res + steering_res) * sign
 
     def _update_steering(self, dt):
@@ -199,10 +189,8 @@ class Ship:
         self.collision_global = []
 
         for x, y in self.config['collision_points']:
-            # 应用旋转矩阵
-            rot_x, rot_y = x * cos_a - y * sin_a, x * sin_a + y * cos_a
-            # 转换为全局坐标
-            global_pos = pygame.Vector2(self.map_pos.x + rot_x, self.map_pos.y + rot_y)
+            rot_x, rot_y = x * cos_a - y * sin_a, x * sin_a + y * cos_a  # 应用旋转矩阵
+            global_pos = pygame.Vector2(self.map_pos.x + rot_x, self.map_pos.y + rot_y)  # 转换为全局坐标
             self.collision_global.append(global_pos)
 
     def draw(self, screen):
@@ -264,7 +252,6 @@ class Ship:
 
         # 绘制多边形轮廓
         pygame.draw.polygon(screen, color, screen_points, self.config['collision_width'])
-
         # 绘制顶点标记
         for p in screen_points:
             pygame.draw.circle(screen, (255, 255, 255), (int(p[0]), int(p[1])), 2)
@@ -290,7 +277,6 @@ class Ship:
 
         # 找到圆形区域内的陆地像素
         land_pixels = np.where(np.logical_and(circle_mask, map_instance.raw_map[top:bottom, left:right]))
-
         # 更新当前帧已探索区域
         map_instance.current_explored[top:bottom, left:right][land_pixels] = True
 
@@ -299,8 +285,8 @@ class NavigationSimulator:
     def __init__(self):
         """窗口对象初始化"""
         pygame.init()
-        self.screen = pygame.display.set_mode(SCREEN_SIZE)
         pygame.display.set_caption("高级船舶模拟器")
+        self.screen = pygame.display.set_mode(SCREEN_SIZE)
         self.clock = pygame.time.Clock()
         self.island_map = IslandMap()
         self.ship = Ship()
@@ -309,7 +295,6 @@ class NavigationSimulator:
     def handle_events(self, dt):
         """处理键盘事件"""
         keys = pygame.key.get_pressed()
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -319,7 +304,6 @@ class NavigationSimulator:
         # 持续按键检测（每帧执行）
         if keys[pygame.K_SPACE]:  # 按住空格持续刹车
             self._apply_brake(dt)
-
         self._handle_rudder_control(keys, dt)
 
     def _handle_gear_change(self, event):
@@ -370,7 +354,7 @@ class NavigationSimulator:
             # 边界保护
             raw_x, raw_y = np.clip(raw_x, 0, ORIGINAL_SIZE - 1), np.clip(raw_y, 0, ORIGINAL_SIZE - 1)
 
-            if self.island_map.raw_map[raw_y, raw_x]:
+            if self.island_map.raw_map[raw_y, raw_x] == 1:
                 self.ship.is_colliding = True
                 # 记录屏幕坐标
                 screen_x = int(point.x * self.ship.screen_scale)
