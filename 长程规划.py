@@ -1,8 +1,5 @@
-import numpy as np
 from heapq import heappush, heappop
-from matplotlib import pyplot as plt
-from 地图生成 import load_island_map, save_island_map
-
+from 地图生成 import np, plt, load_island_map, save_island_map
 
 def dilate_obstacles(grid, dilation_radius=1):
     """障碍物（陆地）膨胀处理"""
@@ -17,7 +14,6 @@ def dilate_obstacles(grid, dilation_radius=1):
                         if 0 <= ny < h and 0 <= nx < w:
                             dilated[ny, nx] = 1  # 将周围标记为障碍
     return dilated
-
 
 def a_star_marine(grid, start, end, safe_margin=16):
     """
@@ -79,7 +75,6 @@ def a_star_marine(grid, start, end, safe_margin=16):
             return []
     path.append(start)
     return path[::-1]
-
 
 def find_base_path(island_map, start, end, safe_margin=16):
     ly, lx = len(island_map), len(island_map[0])

@@ -1,6 +1,6 @@
 import pygame
-import numpy as np
-from 地图生成 import load_island_map
+from 机器学习 import DQN, torch
+from 地图生成 import np, load_island_map
 
 # 配置参数
 ORIGINAL_SIZE = 1024  # 原始地图尺寸
@@ -66,11 +66,11 @@ class IslandMap:
 
 
 class Ship:
-    def __init__(self):
+    def __init__(self, model_path=None):
         """船舶模拟类，负责处理船舶物理特性、运动状态和碰撞检测"""
         # 图形和碰撞配置
         self.config = {
-            'start_pos': (FULL_SIZE//2, FULL_SIZE//2),  # 初始地图坐标 (像素)
+            'start_pos': (47, 2015),  # 初始地图坐标 (像素)
             'ship_shape': [(0, -30), (-15, 30), (15, 30)],  # 船体三角形顶点 (局部坐标)
             'collision_points': [(0, -30), (-15, 30), (15, 30)],  # 碰撞检测点 (局部坐标)
             'collision_color': (255, 0, 255),  # 正常碰撞框颜色 (BGR)
@@ -83,16 +83,16 @@ class Ship:
 
         # 物理参数配置（所有单位基于像素和秒）
         self.physics_config = {
-            'mass': 1500.0,              # 船舶质量 (kg)
+            'mass': 2000.0,              # 船舶质量 (kg)
             'max_rudder_angle': 30.0,    # 最大舵角 (度)
             'rudder_rate': 30.0,         # 舵角变化速率 (度/秒)
             'rudder_efficiency': 0.005,  # 转向效率系数 (1/像素)
             'rudder_return': 1.5,        # 自动回舵系数
-            'propulsion_force': 9000.0,  # 最大推进力 (N)
+            'propulsion_force': 6000.0,  # 最大推进力 (N)
             'water_resistance': 45.0,    # 线性水阻系数 (N·s/pixel)
             'hull_drag': 0.75,           # 二次水阻系数 (N·s²/pixel²)
             'min_steering_speed': 2.5,   # 最小有效转向速度 (pixel/s)
-            'brake_force': 4500.0,       # 刹车力度 (N)
+            'brake_force': 4000.0,       # 刹车力度 (N)
             'side_resistance': 3.2,      # 侧舷转向阻力系数 (N·s²/pixel²)
             'max_gear_forward': 4,       # 最大前进档位
             'max_gear_reverse': 2,       # 最大后退档位
@@ -110,6 +110,9 @@ class Ship:
         self.collision_global = []         # 全局坐标系的碰撞检测点
         self.collision_screen_points = []  # 屏幕坐标的碰撞标记点
         self.is_colliding = False          # 当前碰撞状态
+        self.rl_model = None               # 自动控制状态
+        if model_path:
+            self.load_model(model_path)
 
     @property
     def screen_scale(self):
@@ -139,10 +142,10 @@ class Ship:
             return 0.0
         elif self.gear > 0:
             ratio = self.gear / self.physics_config['max_gear_forward']
-            return ratio * self.physics_config['propulsion_force']
+            return ratio**2 * self.physics_config['propulsion_force']
         else:
             ratio = abs(self.gear) / self.physics_config['max_gear_reverse']
-            return -ratio * self.physics_config['brake_force']
+            return -ratio**2 * self.physics_config['brake_force']
 
     def _calculate_resistance(self):
         """计算综合阻力（含侧舷转向带来的速度损失）"""
@@ -280,6 +283,69 @@ class Ship:
         # 更新当前帧已探索区域
         map_instance.current_explored[top:bottom, left:right][land_pixels] = True
 
+    def load_model(self, path):
+        """加载训练好的模型（兼容性修正）"""
+        self.rl_model = DQN(grid_size=32)  # 必须与训练时的网格尺寸一致
+        self.rl_model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))  # 确保兼容不同设备
+        self.rl_model.eval()
+
+    def get_state(self, map_instance):
+        """获取当前状态（从RLNavigator移植）"""
+        grid_size = 32  # 必须与训练时的网格尺寸一致
+
+        # 获取雷达网格
+        center_x = int(self.map_pos.x / TILE_SCALE)
+        center_y = int(self.map_pos.y / TILE_SCALE)
+        grid = np.zeros((grid_size, grid_size), dtype=np.float32)
+        half = grid_size // 2
+
+        for i in range(-half, half):
+            for j in range(-half, half):
+                x = center_x + i
+                y = center_y + j
+                if 0 <= x < ORIGINAL_SIZE and 0 <= y < ORIGINAL_SIZE:
+                    grid[j + half, i + half] = map_instance.raw_map[y, x]
+
+        # 标准化船舶状态
+        state_vec = np.array([
+            self.velocity / self.physics_config['max_speed_forward'],
+            self.heading / 360.0,
+            self.rudder_angle / self.physics_config['max_rudder_angle'],
+            self.gear / self.physics_config['max_gear_forward']
+        ], dtype=np.float32)
+
+        return grid, state_vec
+
+    def auto_control(self, map_instance):
+        """使用模型自动控制（完整实现）"""
+        # 获取当前状态
+        grid, state = self.get_state(map_instance)
+
+        # 模型推理
+        with torch.no_grad():
+            grid_tensor = torch.FloatTensor(grid).unsqueeze(0).unsqueeze(0)  # 添加batch和channel维度
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            action = self.rl_model(grid_tensor, state_tensor).argmax().item()
+
+        # 执行动作
+        self._execute_rl_action(action)
+
+    def _execute_rl_action(self, action):
+        """将动作编号转换为控制指令"""
+        # 动作定义：{0: 左转, 1: 右转, 2: 加速, 3: 减速, 4: 保持}
+        rudder_step = 5  # 每次舵角变化量
+
+        if action == 0:
+            self.rudder_angle = max(-self.physics_config['max_rudder_angle'], self.rudder_angle - rudder_step)
+        elif action == 1:  # 右转
+            self.rudder_angle = min(self.physics_config['max_rudder_angle'], self.rudder_angle + rudder_step)
+        elif action == 2:  # 加速
+            if self.gear < self.physics_config['max_gear_forward']:
+                self.gear += 1
+        elif action == 3:  # 减速
+            if self.gear > -self.physics_config['max_gear_reverse']:
+                self.gear -= 1
+
 
 class NavigationSimulator:
     def __init__(self):
@@ -366,8 +432,10 @@ class NavigationSimulator:
         while self.running:
             dt = self.clock.tick(60) / 1000.0  # 获取真实时间差
 
-            # 处理输入
-            self.handle_events(dt)
+            if self.ship.rl_model is None:
+                self.handle_events(dt)  # 处理输入
+            else:
+                self.ship.auto_control(self.island_map)  # 自动控制
 
             # 更新状态
             self.ship.update(dt)
@@ -388,4 +456,5 @@ class NavigationSimulator:
 
 if __name__ == "__main__":
     simulator = NavigationSimulator()
+    # simulator.ship = Ship(model_path="ship_dqn.pth")
     simulator.run()
