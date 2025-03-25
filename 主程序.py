@@ -76,8 +76,8 @@ class Ship:
         # 图形和碰撞配置
         self.config = {
             'start_pos': (47, 2015),  # 初始地图坐标 (像素)
-            'ship_shape': [(0, -30), (-15, 30), (15, 30)],  # 船体三角形顶点 (局部坐标)
-            'collision_points': [(0, -30), (-15, 30), (15, 30)],  # 碰撞检测点 (局部坐标)
+            'ship_shape': [(0, -36), (-16, 32), (16, 32)],  # 船体三角形顶点 (局部坐标)
+            'collision_points': [(0, -32), (-16, 32), (16, 32)],  # 碰撞检测点 (局部坐标)
             'collision_color': (255, 0, 255),  # 正常碰撞框颜色 (BGR)
             'collision_alert': (0, 255, 255),  # 碰撞警告颜色 (BGR)
             'bow_vector_color': (255, 127, 0),  # 船头方向向量颜色 (RGB)
@@ -461,5 +461,5 @@ class NavigationSimulator:
 
 if __name__ == "__main__":
     simulator = NavigationSimulator()
-    simulator.ship = Ship(model_path="res\\ship_dqn.pth")
+    # simulator.ship = Ship(model_path="res\\ship_dqn.pth")
     simulator.run()

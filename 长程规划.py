@@ -1,5 +1,6 @@
 from heapq import heappush, heappop
 from 地图生成 import np, plt, load_island_map, save_island_map
+from 平滑操作 import smooth_path
 
 def dilate_obstacles(grid, dilation_radius=1):
     """障碍物（陆地）膨胀处理"""
@@ -81,9 +82,14 @@ def find_base_path(island_map, start, end, safe_margin=16):
     p5 = [(0, 0), (0, 1), (1, 0), (0, -1), (-1, 0)]
     path = a_star_marine(island_map, start, end, safe_margin=safe_margin)  # 查找安全路径
     if path:
-        for y, x in path:
-            for p, q in p5:
-                island_map[np.clip(y+p, 0, ly-1), np.clip(x+q, 0, lx-1)] = 2  # 地图中加厚路径设置为3
+        smoothed_path = smooth_path(path, base_epsilon=2.5, base_alpha=0.25)
+        for point in smoothed_path:
+            # 将浮点坐标四舍五入并转为整数
+            y, x = int(point[0]+0.5), int(point[1]+0.5)
+            for dy, dx in p5:  # 标记路径点及其周围区域
+                ny = np.clip(y + dy, 0, ly - 1)
+                nx = np.clip(x + dx, 0, lx - 1)
+                island_map[ny, nx] = 2  # 使用2表示路径
         return island_map
     else:
         return None
@@ -98,7 +104,7 @@ if __name__ == "__main__":
         plt.imshow(island_map, cmap='terrain')
         plt.scatter(start[1], start[0], c='red', s=200, marker='*', label='Start')
         plt.scatter(end[1], end[0], c='pink', s=200, marker='*', label='End')
-        plt.title('A Star Path with Safety Margin', pad=15, fontweight='bold')
+        plt.title('A Star Path with Safety Margin and Smoothness', pad=15, fontweight='bold')
         plt.show()
     else:
         print("未找到安全路径！")
