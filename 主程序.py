@@ -101,7 +101,7 @@ class Ship:
             'side_resistance': 3.2,      # 侧舷转向阻力系数 (N·s²/pixel²)
             'max_gear_forward': 4,       # 最大前进档位
             'max_gear_reverse': 2,       # 最大后退档位
-            'neutral_drag': 0.9,         # 空档阻力系数 (N·s²/pixel²)
+            'neutral_drag': 0.9,         # 分离阻力系数 (N·s²/pixel²)
             'max_speed_forward': 60.0,   # 最大前进速度 (pixel/s, 原1像素/帧)
             'max_speed_reverse': 30.0    # 最大倒车速度 (pixel/s, 原0.5像素/帧)
         }
@@ -160,8 +160,8 @@ class Ship:
         # 基础阻力 = 线性项 + 二次项
         base_res = self.physics_config['water_resistance'] * speed + self.physics_config['hull_drag'] * speed ** 2
 
-        # 空档附加二次阻力（模拟流体分离效应）
-        if self.gear == 0:
+        # 反向附加二次阻力（模拟流体分离效应）
+        if self.gear * self.velocity <= 0:
             base_res += self.physics_config['neutral_drag'] * speed ** 2
 
         # 侧舷转向阻力（与舵角成正比，速度二次方相关）
