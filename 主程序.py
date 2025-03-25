@@ -14,12 +14,17 @@ class IslandMap:
     def __init__(self):
         """地图信息初始化"""
         # 加载地图数据
-        self.raw_map = load_island_map("island_map_A_Star.npy")
+        self.raw_map = load_island_map("res/island_map_A_Star.npy")
         self.texture = self._create_full_texture()
         self.display_texture = pygame.transform.smoothscale(self.texture, SCREEN_SIZE)
 
         # 当前帧已探索区域记录
         self.current_explored = np.zeros_like(self.raw_map, dtype=int)
+
+    def is_path(self, position):
+        x = int(position.x / TILE_SCALE)
+        y = int(position.y / TILE_SCALE)
+        return self.raw_map[y, x] == 2
 
     def _create_full_texture(self):
         """创建2048×2048的完整纹理"""
@@ -456,5 +461,5 @@ class NavigationSimulator:
 
 if __name__ == "__main__":
     simulator = NavigationSimulator()
-    # simulator.ship = Ship(model_path="ship_dqn.pth")
+    simulator.ship = Ship(model_path="res\\ship_dqn.pth")
     simulator.run()

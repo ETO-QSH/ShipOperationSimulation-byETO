@@ -94,7 +94,7 @@ if __name__ == "__main__":
     start, end = (0, 1023), (1023, 0)
     island_map = find_base_path(island_map, start, end, 16)
     if type(island_map) == np.ndarray:
-        save_island_map(island_map, "island_map_A_Star")
+        save_island_map(island_map, "res\\island_map_A_Star")
         plt.imshow(island_map, cmap='terrain')
         plt.scatter(start[1], start[0], c='red', s=200, marker='*', label='Start')
         plt.scatter(end[1], end[0], c='pink', s=200, marker='*', label='End')

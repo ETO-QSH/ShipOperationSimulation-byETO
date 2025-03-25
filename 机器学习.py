@@ -5,15 +5,13 @@ import torch.optim as optim
 import random
 from pygame import Vector2
 from collections import deque
-
 from 地图生成 import np, plt
-from 主程序 import Ship, IslandMap, NavigationSimulator, ORIGINAL_SIZE, TILE_SCALE
 
 # 强化学习参数
 MEMORY_CAPACITY = 10000
 UPDATE_INTERVAL = 100
 BATCH_SIZE = 128
-GAMMA = 0.99
+GAMMA = 0.98
 
 
 class DQN(nn.Module):
@@ -81,92 +79,6 @@ class ReplayMemory:
         return len(self.memory)
 
 
-class RLNavigator(Ship):
-    """强化学习船舶控制"""
-    def __init__(self):
-        super().__init__()
-        self.grid_size = 32  # 雷达观测网格尺寸
-        self.policy_net = DQN(grid_size=self.grid_size)
-        self.target_net = DQN(grid_size=self.grid_size)
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-4)
-        self.memory = ReplayMemory(MEMORY_CAPACITY)
-        self.step_count = 0
-
-    def get_state(self, map_instance):
-        """获取当前状态"""
-        # 获取雷达网格
-        center_x = int(self.map_pos.x / 2)
-        center_y = int(self.map_pos.y / 2)
-        grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
-        half = self.grid_size // 2
-        for i in range(-half, half):
-            for j in range(-half, half):
-                x = center_x + i
-                y = center_y + j
-                if 0 <= x < 1024 and 0 <= y < 1024:
-                    grid[j + half, i + half] = map_instance.raw_map[y, x]
-
-        # 标准化船舶状态
-        state_vec = np.array([
-            self.velocity / 60.0,
-            self.heading / 360.0,
-            self.rudder_angle / 30.0,
-            self.gear / 4.0
-        ], dtype=np.float32)
-
-        return grid, state_vec
-
-    def choose_action(self, grid, state, epsilon=0.1):
-        """ε-greedy策略选择动作"""
-        if random.random() < epsilon:
-            return random.randint(0, 4)
-        else:
-            with torch.no_grad():
-                grid_tensor = torch.FloatTensor(grid).unsqueeze(0).unsqueeze(0)
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
-                q_values = self.policy_net(grid_tensor, state_tensor)
-            return q_values.argmax().item()
-
-    def update_model(self):
-        """训练网络"""
-        if len(self.memory) < BATCH_SIZE:
-            return
-
-        # 从记忆库采样
-        transitions = self.memory.sample(BATCH_SIZE)
-        batch = list(zip(*transitions))
-
-        # 转换为张量
-        grid_batch = torch.FloatTensor(np.stack(batch[0])).unsqueeze(1)
-        state_batch = torch.FloatTensor(np.stack(batch[1]))
-        action_batch = torch.LongTensor(batch[2])
-        reward_batch = torch.FloatTensor(batch[3])
-        next_grid_batch = torch.FloatTensor(np.stack(batch[4])).unsqueeze(1)
-        next_state_batch = torch.FloatTensor(np.stack(batch[5]))
-        done_batch = torch.FloatTensor(batch[6])
-
-        # 计算当前Q值
-        current_q = self.policy_net(grid_batch, state_batch).gather(1, action_batch.unsqueeze(1))
-
-        # 计算目标Q值
-        with torch.no_grad():
-            next_q = self.target_net(next_grid_batch, next_state_batch).max(1)[0]
-            target_q = reward_batch + (1 - done_batch) * GAMMA * next_q
-
-        # 计算损失
-        loss = nn.MSELoss()(current_q.squeeze(), target_q)
-
-        # 反向传播
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        # 定期更新目标网络
-        if self.step_count % UPDATE_INTERVAL == 0:
-            self.target_net.load_state_dict(self.policy_net.state_dict())
-
-        self.step_count += 1
-
 def train():
     """训练主循环"""
     simulator = NavigationSimulator()
@@ -198,7 +110,7 @@ def train():
             next_grid, next_vec = ship.get_state(simulator.island_map)
 
             # 计算奖励
-            reward = calculate_reward(ship, simulator.island_map)
+            reward = calculate_reward(ship, simulator.island_map, action)
             total_reward += reward
 
             # 记录经验
@@ -218,8 +130,8 @@ def train():
             torch.save(ship.policy_net.state_dict(), f"dqn\\ship_{episode:03}.pth")
 
     # 保存最终模型
-    torch.save(ship.policy_net.state_dict(), f"ship_dqn.pth")
-    
+    torch.save(ship.policy_net.state_dict(), f"res\\ship_dqn.pth")
+
     # 训练结束后绘制趋势图
     plt.figure(figsize=(12, 6))
 
@@ -242,12 +154,12 @@ def train():
     plt.ylabel('Episode Reward')
     plt.xlabel('Episode Number')
     plt.title('Training Progress - Reward Trend', pad=15, fontweight='bold')
-    
+
     # 自动调整布局
     plt.tight_layout()
 
     # 保存并显示图表
-    plt.savefig('training_reward_trend.png', dpi=150)
+    plt.savefig('res\\training_reward_trend.png', dpi=150)
     plt.show()
 
 def execute_action(ship, action):
@@ -262,55 +174,301 @@ def execute_action(ship, action):
     elif action == 3 and ship.gear > -2:
         ship.gear -= 1
 
-def calculate_reward(ship, map_instance):
-    """改进的奖励函数，考虑周围区域航道存在性"""
-    reward = 0
-    detect_radius = 8  # 检测半径
+def calculate_reward(ship, map_instance, action):
+    """基于新奖励方案的奖励函数"""
 
-    # 获取当前船舶所在网格坐标
-    center_x = int(ship.map_pos.x / TILE_SCALE)
-    center_y = int(ship.map_pos.y / TILE_SCALE)
+    # 基础分计算 ----------------------------------------------
+    def get_zone_score(center_points, radius, max_score, weight_func):
+        """计算指定区域的路径得分（添加除零保护）"""
+        total = 0
+        for point in center_points:
+            map_x = int(point.x / TILE_SCALE)
+            map_y = int(point.y / TILE_SCALE)
+            local_path_mask, weights = generate_detection_grid(
+                map_instance,
+                center=(map_x, map_y),
+                radius=radius,
+                weight_func=weight_func
+            )
 
-    # 边界保护
-    x_min = max(0, center_x - detect_radius)
-    x_max = min(ORIGINAL_SIZE, center_x + detect_radius + 1)
-    y_min = max(0, center_y - detect_radius)
-    y_max = min(ORIGINAL_SIZE, center_y + detect_radius + 1)
+            # 安全校验
+            sum_weights = np.sum(weights)
+            if sum_weights < 1e-3:  # 浮点数精度保护
+                score = 0.0
+            else:
+                score = np.sum(local_path_mask * weights) / sum_weights
 
-    # 创建检测区域网格
-    x = np.arange(x_min, x_max)
-    y = np.arange(y_min, y_max)
-    xx, yy = np.meshgrid(x, y)
+            # 添加区域有效性校验
+            if np.sum(local_path_mask) == 0:  # 无路径区域
+                score *= 0.8  # 轻微惩罚
 
-    # 计算圆形掩膜（边界自动裁剪）
-    distance = np.sqrt((xx - center_x) ** 2 + (yy - center_y) ** 2)
-    circle_mask = distance <= detect_radius
+            total += score * max_score
+        return total
 
-    # 获取区域内的地图数据
-    area_data = map_instance.raw_map[y_min:y_max, x_min:x_max]
+    # 各区域得分计算
+    head_score = get_zone_score(
+        center_points=[ship.collision_global[0]],
+        radius=8,
+        max_score=3,
+        weight_func=lambda d: np.exp(-0.5 * (d / 2.5) ** 2)  # 高斯衰减
+    )
 
-    # 计算航道存在比例
-    channel_pixels = np.sum((area_data == 2) & circle_mask)
-    total_pixels = np.sum(circle_mask)
-    channel_ratio = channel_pixels / total_pixels if total_pixels > 0 else 0
+    heart_score = get_zone_score(
+        center_points=[ship.map_pos],
+        radius=12,
+        max_score=1.5,
+        weight_func=lambda d: 1 - d / 12  # 线性衰减
+    )
 
-    # 航道奖励（连续值）
-    reward += 3.0 * channel_ratio  # 最大奖励3.0当完全在航道内
+    tail_score = get_zone_score(
+        center_points=get_rectangular_points(ship, density=0.8),
+        radius=4,
+        max_score=0.5,
+        weight_func=lambda d: np.exp(-d ** 2 / 8)  # 高斯衰减
+    )
+
+    # 速度档位倍率
+    gear_rates = {-2: -0.25, -1: 0, 0: 0.25, 1: 0.75, 2: 1.50, 3: 2.50, 4: 3.75}
+    gear_rate = gear_rates.get(ship.gear, 0)
+
+    # 舵角倍率 (1 - |angle|/60)
+    rudder_rate = 1 - abs(ship.rudder_angle) / 60
+
+    # 基础分
+    base_score = (head_score + heart_score + tail_score) * gear_rate * rudder_rate
+
+    # 修正分计算 ----------------------------------------------
+    # 1. 路径偏离修正
+    correction = 1.0
+    if head_score < 0.1 or heart_score < 0.1:  # 关键区域无路径
+        # 获取船头左右两点连线方向
+        bow_left = ship.collision_global[1]
+        bow_right = ship.collision_global[2]
+        path_center = find_nearest_path_center(map_instance, ship.map_pos)
+
+        # 计算偏离方向
+        offset = (bow_left - path_center).cross(bow_right - path_center)
+        if offset > 0:  # 路径在右侧
+            if action == 0:
+                correction *= 0.33  # 左转惩罚
+            elif action == 1:
+                correction *= 3.0  # 右转奖励
+        else:  # 路径在左侧
+            if action == 0:
+                correction *= 3.0
+            elif action == 1:
+                correction *= 0.33
+
+    # 2. 路径走向贴合修正
+    sector_points = get_sector_path_points(map_instance, ship, radius=30)
+    if len(sector_points) > 0:
+        # 计算平均方向向量
+        avg_vec = Vector2(0, 0)
+        for p in sector_points:
+            avg_vec += (p - ship.map_pos).normalize()
+        avg_dir = avg_vec.angle_to(ship.collision_global[0] - ship.map_pos)
+
+        # 角度差处理
+        angle_diff = abs(avg_dir)
+        if angle_diff <= 15:
+            direction_bonus = 3.0
+            turn_penalty = 0.5
+        elif angle_diff <= 30:
+            direction_bonus = 1.5 + 1.5 * (30 - angle_diff) / 15
+            turn_penalty = 0.75
+        else:
+            direction_bonus = 0.2
+            turn_penalty = 1.0
+
+        # 转向修正
+        if avg_dir > 0:  # 需要左转
+            if action == 0:
+                correction *= turn_penalty
+            elif action == 1:
+                correction /= turn_penalty
+        else:  # 需要右转
+            if action == 0:
+                correction /= turn_penalty
+            elif action == 1:
+                correction *= turn_penalty
+
+        base_score *= direction_bonus
+
+    # 最终得分整合
+    total_reward = base_score * correction
 
     # 碰撞惩罚
     if ship.is_colliding:
-        reward -= 25.0
+        total_reward -= 256
 
-    # 速度奖励（鼓励保持中高速）
-    optimal_speed = ship.physics_config["max_speed_forward"]
-    speed_diff = abs(ship.velocity - optimal_speed)
-    reward += 0.5 * np.exp(-0.1 * speed_diff)  # 峰值奖励0.5
+    return total_reward
 
-    # 航向稳定性奖励（减少无谓转向）
-    reward += 0.02 * (30.0 - abs(ship.rudder_angle))  # 零舵角时获得最大奖励
+def find_nearest_path_center(map_instance, position):
+    """寻找最近的路径区域中心"""
+    map_x = int(position.x / TILE_SCALE)
+    map_y = int(position.y / TILE_SCALE)
 
-    return reward
+    # 搜索半径逐步扩大
+    for r in range(10, 100, 10):
+        x_min = max(0, map_x - r)
+        x_max = min(ORIGINAL_SIZE, map_x + r)
+        y_min = max(0, map_y - r)
+        y_max = min(ORIGINAL_SIZE, map_y + r)
+
+        # 寻找路径点
+        path_points = np.argwhere(map_instance.raw_map[y_min:y_max, x_min:x_max] == 2)
+        if len(path_points) > 0:
+            avg_y = np.mean(path_points[:, 0]) + y_min
+            avg_x = np.mean(path_points[:, 1]) + x_min
+            return Vector2(avg_x * TILE_SCALE, avg_y * TILE_SCALE)
+
+    return position  # 未找到时返回当前位置
+
+def get_sector_path_points(map_instance, ship, radius=30):
+    """获取船头扇形区域内的路径点"""
+    sector_points = []
+    bow_dir = (ship.collision_global[0] - ship.map_pos).normalize()
+    for angle in range(-30, 31, 5):
+        for r in range(5, radius + 1, 5):
+            dir_vec = bow_dir.rotate(angle) * r
+            check_pos = ship.map_pos + dir_vec
+            # 转换为地图坐标检查
+            map_x = int(check_pos.x / TILE_SCALE)
+            map_y = int(check_pos.y / TILE_SCALE)
+            if 0 <= map_x < ORIGINAL_SIZE and 0 <= map_y < ORIGINAL_SIZE:
+                if map_instance.raw_map[map_y, map_x] == 2:
+                    sector_points.append(check_pos)
+    return sector_points
+
+def generate_detection_grid(map_instance, center, radius, weight_func):
+    """返回局部路径掩码和权重矩阵"""
+    x_min = max(0, center[0] - radius)
+    x_max = min(map_instance.raw_map.shape[1], center[0] + radius + 1)
+    y_min = max(0, center[1] - radius)
+    y_max = min(map_instance.raw_map.shape[0], center[1] + radius + 1)
+
+    if x_min >= x_max or y_min >= y_max:
+        return np.zeros((0, 0), dtype=float), 0.0
+
+    # 生成局部地图切片
+    local_map = map_instance.raw_map[y_min:y_max, x_min:x_max]
+    path_mask = (local_map == 2).astype(float)
+
+    # 生成权重矩阵
+    xx, yy = np.meshgrid(
+        np.arange(x_min, x_max) - center[0],
+        np.arange(y_min, y_max) - center[1]
+    )
+    distances = np.sqrt(xx ** 2 + yy ** 2)
+    weights = np.where(distances <= radius, weight_func(distances), 0)
+
+    return path_mask, weights
+
+def get_rectangular_points(ship, density=0.5):
+    """生成船尾矩形检测点"""
+    p1, p2 = ship.collision_global[1], ship.collision_global[2]  # 获取船尾左右两点
+    length, width = 32, 2  # 计算矩形参数
+
+    # 生成采样点
+    points = []
+    for t in np.arange(0, 1, density / length):
+        base_point = p1.lerp(p2, t)
+        direction = ship.collision_global[0] - ship.map_pos  # 船头方向
+        perp_direction = Vector2(-direction.y, direction.x).normalize()
+
+        for w in np.arange(-width / 2, width / 2, density):
+            points.append(base_point + w * perp_direction)
+
+    return points
 
 
 if __name__ == "__main__":
+    from 主程序 import Ship, IslandMap, NavigationSimulator, ORIGINAL_SIZE, TILE_SCALE
+
+    class RLNavigator(Ship):
+        """强化学习船舶控制"""
+        def __init__(self):
+            super().__init__()
+            self.grid_size = 32  # 雷达观测网格尺寸
+            self.policy_net = DQN(grid_size=self.grid_size)
+            self.target_net = DQN(grid_size=self.grid_size)
+            self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-4)
+            self.memory = ReplayMemory(MEMORY_CAPACITY)
+            self.step_count = 0
+
+        def get_state(self, map_instance):
+            """获取当前状态"""
+            # 获取雷达网格
+            center_x = int(self.map_pos.x / 2)
+            center_y = int(self.map_pos.y / 2)
+            grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+            half = self.grid_size // 2
+            for i in range(-half, half):
+                for j in range(-half, half):
+                    x = center_x + i
+                    y = center_y + j
+                    if 0 <= x < 1024 and 0 <= y < 1024:
+                        grid[j + half, i + half] = map_instance.raw_map[y, x]
+
+            # 标准化船舶状态
+            state_vec = np.array([
+                self.velocity / 60.0,
+                self.heading / 360.0,
+                self.rudder_angle / 30.0,
+                self.gear / 4.0
+            ], dtype=np.float32)
+
+            return grid, state_vec
+
+        def choose_action(self, grid, state, epsilon=0.1):
+            """ε-greedy策略选择动作"""
+            if random.random() < epsilon:
+                return random.randint(0, 4)
+            else:
+                with torch.no_grad():
+                    grid_tensor = torch.FloatTensor(grid).unsqueeze(0).unsqueeze(0)
+                    state_tensor = torch.FloatTensor(state).unsqueeze(0)
+                    q_values = self.policy_net(grid_tensor, state_tensor)
+                return q_values.argmax().item()
+
+        def update_model(self):
+            """训练网络"""
+            if len(self.memory) < BATCH_SIZE:
+                return
+
+            # 从记忆库采样
+            transitions = self.memory.sample(BATCH_SIZE)
+            batch = list(zip(*transitions))
+
+            # 转换为张量
+            grid_batch = torch.FloatTensor(np.stack(batch[0])).unsqueeze(1)
+            state_batch = torch.FloatTensor(np.stack(batch[1]))
+            action_batch = torch.LongTensor(batch[2])
+            reward_batch = torch.FloatTensor(batch[3])
+            next_grid_batch = torch.FloatTensor(np.stack(batch[4])).unsqueeze(1)
+            next_state_batch = torch.FloatTensor(np.stack(batch[5]))
+            done_batch = torch.FloatTensor(batch[6])
+
+            # 计算当前Q值
+            current_q = self.policy_net(grid_batch, state_batch).gather(1, action_batch.unsqueeze(1))
+
+            # 计算目标Q值
+            with torch.no_grad():
+                next_q = self.target_net(next_grid_batch, next_state_batch).max(1)[0]
+                target_q = reward_batch + (1 - done_batch) * GAMMA * next_q
+
+            # 计算损失
+            loss = nn.MSELoss()(current_q.squeeze(), target_q)
+
+            # 反向传播
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            # 定期更新目标网络
+            if self.step_count % UPDATE_INTERVAL == 0:
+                self.target_net.load_state_dict(self.policy_net.state_dict())
+
+            self.step_count += 1
+
     train()
