@@ -76,14 +76,16 @@ class Ship:
         # 图形和碰撞配置
         self.config = {
             'start_pos': (47, 2015),  # 初始地图坐标 (像素)
-            'ship_shape': [(0, -36), (-16, 32), (16, 32)],  # 船体三角形顶点 (局部坐标)
-            'collision_points': [(0, -32), (-16, 32), (16, 32)],  # 碰撞检测点 (局部坐标)
+            'ship_shape': [(0, -24), (-12, 24), (12, 24)],  # 船体三角形顶点 (局部坐标)
+            'collision_points': [(0, -24), (-12, 24), (12, 24)],  # 碰撞检测点 (局部坐标)
             'collision_color': (255, 0, 255),  # 正常碰撞框颜色 (BGR)
             'collision_alert': (0, 255, 255),  # 碰撞警告颜色 (BGR)
             'bow_vector_color': (255, 127, 0),  # 船头方向向量颜色 (RGB)
             'rudder_vector_color': (192, 192, 0),  # 舵向方向向量颜色 (RGB)
             'collision_width': 1,  # 碰撞框线宽 (像素)
-            'vector_width': 2  # 向量线线宽 (像素)
+            'collision_radius': 2,  # 监测点半径 (像素)
+            'vector_width': 3,  # 向量线线宽 (像素)
+            'vector_length': 72  # 向量线线长 (像素)
         }
 
         # 物理参数配置（所有单位基于像素和秒）
@@ -207,12 +209,14 @@ class Ship:
 
         # 船头方向向量
         head_angle = np.deg2rad(self.heading)
-        head_end = center_screen[0] + 90 * np.cos(head_angle) * self.screen_scale, center_screen[1] - 90 * np.sin(head_angle) * self.screen_scale
+        head_end = (center_screen[0] + self.config['vector_length'] * np.cos(head_angle) * self.screen_scale,
+                    center_screen[1] - self.config['vector_length'] * np.sin(head_angle) * self.screen_scale)
         pygame.draw.line(screen, self.config['bow_vector_color'], center_screen, head_end, self.config['vector_width'])
 
         # 舵角方向向量
         rudder_angle = np.deg2rad(self.heading + self.rudder_angle)
-        rudder_end = center_screen[0] + 90 * np.cos(rudder_angle) * self.screen_scale, center_screen[1] - 90 * np.sin(rudder_angle) * self.screen_scale
+        rudder_end = (center_screen[0] + self.config['vector_length'] * np.cos(rudder_angle) * self.screen_scale,
+                      center_screen[1] - self.config['vector_length'] * np.sin(rudder_angle) * self.screen_scale)
         pygame.draw.line(screen, self.config['rudder_vector_color'], center_screen, rudder_end, self.config['vector_width'])
 
         # 绘制船体碰撞框
@@ -222,10 +226,10 @@ class Ship:
         # 绘制碰撞点标记
         if self.collision_screen_points:
             for p in self.collision_screen_points:
-                pygame.draw.circle(screen, (0, 255, 0), p, 2)
+                pygame.draw.circle(screen, (0, 255, 0), p, self.config['collision_radius'])
 
         rad = np.deg2rad(self.heading + 180)  # 正后方方向
-        text_offset = 10 * self.screen_scale  # 偏移量
+        text_offset = 4 * self.screen_scale  # 偏移量
         text_pos = self.map_pos.x * self.screen_scale + np.cos(rad) * text_offset, self.map_pos.y * self.screen_scale - np.sin(rad) * text_offset
 
         # 创建旋转字体对象
@@ -262,7 +266,7 @@ class Ship:
         pygame.draw.polygon(screen, color, screen_points, self.config['collision_width'])
         # 绘制顶点标记
         for p in screen_points:
-            pygame.draw.circle(screen, (255, 255, 255), (int(p[0]), int(p[1])), 2)
+            pygame.draw.circle(screen, (255, 255, 255), (int(p[0]), int(p[1])), self.config['collision_radius'])
 
     def _rotate_point(self, x, y):
         """坐标旋转辅助函数"""
@@ -395,9 +399,8 @@ class NavigationSimulator:
             delta = rudder_input * max_rate * dt
             self.ship.rudder_angle += delta
         else:
-            # 自动回舵（阻尼效应）
             return_speed = max_rate * self.ship.physics_config['rudder_return'] * dt
-            current_angle = abs(self.ship.rudder_angle)
+            current_angle = abs(self.ship.rudder_angle)  # 自动回舵（阻尼效应）
             if current_angle > return_speed:
                 self.ship.rudder_angle -= np.sign(self.ship.rudder_angle) * return_speed
             else:
@@ -418,19 +421,13 @@ class NavigationSimulator:
         """精确碰撞检测"""
         self.ship.is_colliding = False
         self.ship.collision_screen_points = []
-
         for point in self.ship.collision_global:
-            # 转换为原始地图坐标
-            raw_x, raw_y = int(point.x / TILE_SCALE), int(point.y / TILE_SCALE)
-            # 边界保护
-            raw_x, raw_y = np.clip(raw_x, 0, ORIGINAL_SIZE - 1), np.clip(raw_y, 0, ORIGINAL_SIZE - 1)
-
+            raw_x, raw_y = int(point.x / TILE_SCALE), int(point.y / TILE_SCALE)  # 转换为原始地图坐标
+            raw_x, raw_y = np.clip(raw_x, 0, ORIGINAL_SIZE - 1), np.clip(raw_y, 0, ORIGINAL_SIZE - 1)  # 边界保护
             if self.island_map.raw_map[raw_y, raw_x] == 1:
                 self.ship.is_colliding = True
-                # 记录屏幕坐标
-                screen_x = int(point.x * self.ship.screen_scale)
-                screen_y = int(point.y * self.ship.screen_scale)
-                self.ship.collision_screen_points.append((screen_x, screen_y))
+                screen_x, screen_y = int(point.x * self.ship.screen_scale), int(point.y * self.ship.screen_scale)
+                self.ship.collision_screen_points.append((screen_x, screen_y))  # 记录屏幕坐标
 
     def run(self):
         """主循环"""
@@ -447,7 +444,7 @@ class NavigationSimulator:
             self.check_collision()
 
             # 雷达检测
-            self.ship.radar_detect(self.island_map, 256)  # 雷达半径为256像素
+            self.ship.radar_detect(self.island_map, 128)  # 雷达半径为128像素
 
             # 渲染画面
             self.screen.blit(self.island_map.display_texture, (0, 0))
