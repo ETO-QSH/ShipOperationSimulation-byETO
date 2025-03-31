@@ -7,14 +7,14 @@ ORIGINAL_SIZE = 1024  # 原始地图尺寸
 TILE_SCALE = 2  # 每个逻辑单元放大倍数
 FULL_SIZE = ORIGINAL_SIZE * TILE_SCALE  # 2048×2048
 SCREEN_SIZE = (768, 768)  # 显示窗口尺寸
-COLORS = {'sea': (31, 159, 255), 'land': (31, 159, 31), 'road': (255, 0, 0), 'ship': (255, 127, 191)}
+COLORS = {'sea': (31, 159, 255), 'land': (31, 159, 31), 'road': (255, 0, 0), 'ship': (255, 127, 191), 'orz': (0, 255, 0)}
 
 
 class IslandMap:
     def __init__(self):
         """地图信息初始化"""
         # 加载地图数据
-        self.raw_map = load_island_map("res/island_map_A_Star.npy")
+        self.raw_map = load_island_map("res\\island_map_A_Star.npy")
         self.texture = self._create_full_texture()
         self.display_texture = pygame.transform.smoothscale(self.texture, SCREEN_SIZE)
 
@@ -34,7 +34,7 @@ class IslandMap:
         # 使用numpy向量化操作加速纹理生成
         land_mask = np.repeat(np.repeat(transposed_map, TILE_SCALE, axis=0), TILE_SCALE, axis=1)
         # 颜色矩阵映射
-        color_palette = np.array([COLORS['sea'], COLORS['land'], COLORS['road']], dtype=np.uint8)
+        color_palette = np.array([COLORS['sea'], COLORS['land'], COLORS['road'], COLORS['orz']], dtype=np.uint8)
         # 使用NumPy高级索引直接映射颜色
         color_array = color_palette[land_mask]
         # 转换为Pygame Surface
@@ -98,7 +98,7 @@ class Ship:
             'propulsion_force': 6000.0,  # 最大推进力 (N)
             'water_resistance': 45.0,    # 线性水阻系数 (N·s/pixel)
             'hull_drag': 0.75,           # 二次水阻系数 (N·s²/pixel²)
-            'min_steering_speed': 2.5,   # 最小有效转向速度 (pixel/s)
+            'min_steering_speed': 5.0,   # 最小有效转向速度 (pixel/s)
             'brake_force': 4000.0,       # 刹车力度 (N)
             'side_resistance': 3.2,      # 侧舷转向阻力系数 (N·s²/pixel²)
             'max_gear_forward': 4,       # 最大前进档位
@@ -344,7 +344,7 @@ class Ship:
         # 动作定义：{0: 左转, 1: 右转, 2: 加速, 3: 减速, 4: 保持}
         rudder_step = 5  # 每次舵角变化量
 
-        if action == 0:
+        if action == 0:  # 左转
             self.rudder_angle = max(-self.physics_config['max_rudder_angle'], self.rudder_angle - rudder_step)
         elif action == 1:  # 右转
             self.rudder_angle = min(self.physics_config['max_rudder_angle'], self.rudder_angle + rudder_step)
@@ -378,6 +378,8 @@ class NavigationSimulator:
 
         # 持续按键检测（每帧执行）
         if keys[pygame.K_SPACE]:  # 按住空格持续刹车
+            if self.ship.velocity < self.ship.physics_config['min_steering_speed']:
+                self.ship.velocity = 0  # 抛锚抛锚
             self._apply_brake(dt)
         self._handle_rudder_control(keys, dt)
 

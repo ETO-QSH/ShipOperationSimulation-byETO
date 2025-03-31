@@ -1,15 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def save_island_map(island_map, filename="res\\island_map.npy"):
-    """保存岛屿地图到文件"""
-    np.save(filename, island_map)
-    print(f"岛屿地图已保存到 {filename}")
-
 def load_island_map(filename="res\\island_map.npy"):
     """从文件加载岛屿地图"""
     island_map = np.load(filename)
-    print(f"岛屿地图已从 {filename} 加载")
+    print(f"岛屿地图已从 {filename.split('\\')[1]} 加载")
     return island_map
 
 def generate_perlin_noise_2d(shape, scale=100.0, octaves=2, persistence=0.5, lacunarity=2.0, seed=None):
@@ -124,7 +119,7 @@ def make_perlin_map(width=1024, height=1024, scale=100.0, octaves=2, persistence
 if __name__ == "__main__":
     # 生成并保存岛屿地图
     island_map = make_perlin_map()
-    save_island_map(island_map)
+    np.save(island_map, "res\\island_map.npy")
 
     # 可视化海图
     plt.imshow(island_map, cmap='terrain')

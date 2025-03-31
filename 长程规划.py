@@ -1,6 +1,6 @@
-from heapq import heappush, heappop
-from 地图生成 import np, plt, load_island_map, save_island_map
 from 平滑操作 import smooth_path
+from heapq import heappush, heappop
+from 地图生成 import np, plt, load_island_map
 
 def dilate_obstacles(grid, dilation_radius=1):
     """障碍物（陆地）膨胀处理"""
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     start, end = (0, 1023), (1023, 0)
     island_map = find_base_path(island_map, start, end, 16)
     if type(island_map) == np.ndarray:
-        save_island_map(island_map, "res\\island_map_A_Star")
+        np.save(island_map, "res\\island_map_A_Star")
         plt.imshow(island_map, cmap='terrain')
         plt.scatter(start[1], start[0], c='red', s=200, marker='*', label='Start')
         plt.scatter(end[1], end[0], c='pink', s=200, marker='*', label='End')

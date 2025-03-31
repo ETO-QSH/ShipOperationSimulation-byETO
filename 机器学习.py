@@ -1,11 +1,10 @@
 import torch
+import random
 import torch.nn as nn
 import torch.optim as optim
-
-import random
 from pygame import Vector2
-from collections import deque
 from 地图生成 import np, plt
+from collections import deque
 
 # 强化学习参数
 MEMORY_CAPACITY = 10000
