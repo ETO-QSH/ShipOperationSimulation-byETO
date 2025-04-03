@@ -9,6 +9,9 @@ def load_island_map(filename="res\\island_map.npy"):
 
 def generate_perlin_noise_2d(shape, scale=100.0, octaves=2, persistence=0.5, lacunarity=2.0, seed=None):
     """生成二维柏林噪声"""
+    if seed:
+        np.random.seed(seed)
+    noise_map = np.zeros(shape)
 
     def leap(a, b, x):
         return a + x * (b - a)
@@ -20,10 +23,6 @@ def generate_perlin_noise_2d(shape, scale=100.0, octaves=2, persistence=0.5, lac
         vectors = np.array([[0, 1], [0, -1], [1, 0], [-1, 0]])
         return vectors[h % 4].dot(np.array([x, y]))
 
-    if seed:
-        np.random.seed(seed)
-
-    noise_map = np.zeros(shape)
     for i in range(shape[0]):
         for j in range(shape[1]):
             x, y = j / scale, i / scale
